@@ -423,7 +423,8 @@ def build_voice_track(segments, voice, workdir, duration, progress_callback=None
     return prepared
 
 
-def render_dubbed_video(source, prepared_audio, duration, output_path):
+def render_dubbed_video(source, prepared_audio, duration, output_path,
+                        export_mode="TikTok 9:16", color_style="Natural", slight_crop=True):
     args = [ffmpeg_path(), "-y", "-i", str(source), "-f", "lavfi", "-t", str(duration),
             "-i", "anullsrc=r=24000:cl=mono"]
     for audio_path, _ in prepared_audio:
@@ -439,9 +440,28 @@ def render_dubbed_video(source, prepared_audio, duration, output_path):
                    f"atrim=duration={duration:.3f},asetpts=PTS-STARTPTS,"
                    "loudnorm=I=-16:TP=-1.5:LRA=7[aout]")
 
+    if export_mode == "TikTok 9:16 (1080x1920)":
+        visual_filters = []
+        if slight_crop:
+            visual_filters.append("crop=iw*0.97:ih*0.97:(iw-ow)/2:(ih-oh)/2")
+        visual_filters.append("scale=1080:1920:force_original_aspect_ratio=increase")
+        visual_filters.append("crop=1080:1920:(iw-1080)/2:(ih-1920)/2")
+        visual_filters.append("setsar=1")
+    else:
+        visual_filters = []
+
+    if color_style == "Warm":
+        visual_filters.append("colorbalance=rs=.05:gs=.02:bs=-.04")
+    elif color_style == "Cool":
+        visual_filters.append("colorbalance=rs=-.04:gs=.01:bs=.05")
+    elif color_style == "Vivid":
+        visual_filters.append("eq=contrast=1.04:saturation=1.08:brightness=0.01")
+
+    video_filter = ",".join(visual_filters) if visual_filters else "null"
     args += ["-filter_complex", ";".join(filters)]
     args += ["-map", "0:v:0", "-map", "[aout]",
-             "-t", f"{duration:.3f}", "-c:v", "libx264", "-preset", "veryfast", "-crf", "22",
+             "-t", f"{duration:.3f}", "-vf", video_filter,
+             "-c:v", "libx264", "-preset", "veryfast", "-crf", "22",
              "-c:a", "aac", "-b:a", "160k", "-movflags", "+faststart", "-shortest", str(output_path)]
     run_cmd(args, timeout=7200)
 
@@ -451,7 +471,7 @@ def main():
     st.write("Video တစ်ခုတည်းတင်ပါ။ မူရင်းအသံအားလုံးကို ဖယ်ရှားပြီး မြန်မာအသံနဲ့ အစားထိုးပေးပါမယ်။")
     st.info("မူရင်းဘာသာစကားအသံကို Final MP4 ထဲ မထည့်ဘဲ မြန်မာအသံတစ်ခုတည်း ထည့်ပေးပါမယ်။ API key မရှိရင် Free mode နဲ့ local processing လုပ်နိုင်ပါတယ်။")
 
-    grok_key = secret("XAI_API_KEY")
+    configured_grok_key = secret("XAI_API_KEY")
     gemini_key = secret("GEMINI_API_KEY")
     groq_key = secret("GROQ_API_KEY")
     openrouter_key = secret("OPENROUTER_API_KEY")
@@ -463,6 +483,17 @@ def main():
             st.stop()
 
     uploaded = st.file_uploader("Video တင်ပါ (MP4 / MOV / MKV / WEBM)", type=["mp4", "mov", "mkv", "webm"])
+    entered_grok_key = st.text_input(
+        "Grok (xAI) API key — ဒီ run အတွက်သာ အသုံးပြုမည်",
+        type="password",
+        placeholder="xai-...",
+        help="Key ကို file ထဲ မရေးပါ။ Streamlit session အတွင်း ဒီ processing run အတွက်သာ အသုံးပြုပါမယ်။"
+    )
+    grok_key = entered_grok_key.strip() or configured_grok_key
+    if configured_grok_key and not entered_grok_key:
+        st.caption("Streamlit Secrets ထဲက XAI_API_KEY ကို အသုံးပြုနေသည်။")
+    elif entered_grok_key:
+        st.caption("ထည့်ထားသော Grok key ကို ဒီ session အတွင်းသာ အသုံးပြုနေသည်။")
     active_providers = []
     if grok_key:
         active_providers.append("Grok")
@@ -472,7 +503,11 @@ def main():
         active_providers.append("Free local Whisper → Free translation → Edge TTS")
     st.caption("အသုံးပြုမည့် processing mode: " + " → ".join(active_providers))
     voice_label = st.selectbox("မြန်မာအသံရွေးချယ်ပါ", ["နီလာ (မိန်းကလေး)", "သီဟ (ယောက်ျားလေး)"])
-    st.caption("Video ကို preview/blur/subtitle မထည့်ဘဲ မူရင်းကြာချိန်အတိုင်း clean dubbed MP4 ထုတ်ပေးပါမယ်။")
+    export_mode = st.selectbox("Final video format", ["TikTok 9:16 (1080x1920)", "Original aspect ratio"])
+    color_style = st.selectbox("Color style", ["Natural", "Warm", "Cool", "Vivid"])
+    slight_crop = st.checkbox("Slight center crop (3%)", value=True,
+                              help="Portrait framing အတွက်သာ အသုံးပြုသည်။ ကိုယ်ပိုင် သို့မဟုတ် လိုင်စင်ရှိသော video များအတွက် သုံးပါ။")
+    st.caption("ဒီ export controls တွေဟာ platform formatting နဲ့ creative grading အတွက်သာ ဖြစ်ပြီး မူပိုင်ခွင့်စစ်ဆေးမှုကို ရှောင်ရန် မဟုတ်ပါ။")
 
     if uploaded and uploaded.size > MAX_MB * 1024 * 1024:
         st.error(f"Video သည် {MAX_MB} MB ထက်ကျော်နေပါသည်။")
@@ -536,7 +571,9 @@ def main():
                 set_progress(84, "မြန်မာအသံ ပြင်ဆင်ပြီးပါပြီ")
 
                 status.info("မူရင်းအသံ Track ကို ဖယ်ရှားပြီး မြန်မာအသံတစ်ခုတည်း ထည့်နေသည်...")
-                render_dubbed_video(video, prepared_audio, duration, output_mp4)
+                render_dubbed_video(video, prepared_audio, duration, output_mp4,
+                                    export_mode=export_mode, color_style=color_style,
+                                    slight_crop=slight_crop)
                 validation_note = validate_final_video(output_mp4, duration)
                 # Export a standalone MP3 from the final MP4 audio, ensuring it matches the final mix.
                 run_cmd([ffmpeg_path(), "-y", "-i", str(output_mp4), "-vn", "-c:a", "libmp3lame",
@@ -547,8 +584,9 @@ def main():
                 status.success(f"Dubbing အောင်မြင်ပါပြီ။ Final audio စစ်ဆေးပြီးပါပြီ ({validation_note})")
                 st.subheader("Final Myanmar Dubbed Video")
                 st.video(str(output_mp4))
+                output_name = "myanmar_dubbed_tiktok_9x16.mp4" if export_mode.startswith("TikTok") else "myanmar_dubbed_video.mp4"
                 st.download_button("⬇️ မြန်မာအသံ Video (MP4)", output_mp4.read_bytes(),
-                                   file_name="myanmar_dubbed_video.mp4", mime="video/mp4")
+                                   file_name=output_name, mime="video/mp4")
                 st.download_button("⬇️ မြန်မာအသံ (MP3)", output_mp3.read_bytes(),
                                    file_name="myanmar_voice.mp3", mime="audio/mpeg")
             except Exception as exc:
