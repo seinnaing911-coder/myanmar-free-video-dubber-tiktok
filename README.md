@@ -28,8 +28,10 @@ LOCAL_WHISPER_MODEL = "tiny"
 GROQ_API_KEY = "your-groq-key"
 OPENROUTER_API_KEY = "your-openrouter-key"
 APP_PASSWORD = "your-private-password"
+MYMEMORY_EMAIL = "your-email@example.com"
 ```
 Keep API keys private. Do not commit real keys to GitHub.
+`MYMEMORY_EMAIL` is optional. It can also be entered directly in the app below the video uploader; when provided, it is sent to MyMemory to use the email-associated quota.
 
 ## Provider order
 

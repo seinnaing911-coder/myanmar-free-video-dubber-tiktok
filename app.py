@@ -201,14 +201,17 @@ def call_openrouter_api(prompt, api_key):
 
 
 @lru_cache(maxsize=256)
-def free_translate_text(text):
+def free_translate_text(text, mymemory_email=""):
     """Translate to Burmese through MyMemory autodetect without Google rate limits."""
     errors = []
     for attempt in range(3):
         try:
+            params = {"q": text, "langpair": "autodetect|my-MM"}
+            if mymemory_email:
+                params["de"] = mymemory_email
             response = requests.get(
                 "https://api.mymemory.translated.net/get",
-                params={"q": text, "langpair": "autodetect|my-MM"},
+                params=params,
                 headers={"User-Agent": "Myanmar-Free-Video-Dubber/1.0"},
                 timeout=45,
             )
@@ -224,7 +227,7 @@ def free_translate_text(text):
     raise RuntimeError("MyMemory Burmese translation failed: " + " | ".join(errors[:2]))
 
 
-def free_translate_segments(segments, progress_callback=None):
+def free_translate_segments(segments, mymemory_email="", progress_callback=None):
     translated = []
     errors = []
     chunk_size = 6
@@ -232,7 +235,7 @@ def free_translate_segments(segments, progress_callback=None):
         batch = segments[chunk_start:chunk_start + chunk_size]
         source_text = "\n".join(seg["text"] for seg in batch)
         try:
-            translated_text = free_translate_text(source_text)
+            translated_text = free_translate_text(source_text, mymemory_email)
             lines = [line.strip() for line in translated_text.splitlines() if line.strip()]
             if len(lines) != len(batch) or not all(contains_burmese(line) for line in lines):
                 raise RuntimeError("context translation did not preserve all line boundaries")
@@ -247,7 +250,7 @@ def free_translate_segments(segments, progress_callback=None):
     return translated, "Free MyMemory autodetect"
 
 
-def translate_segments(segments, openrouter_key, progress_callback=None):
+def translate_segments(segments, openrouter_key, mymemory_email="", progress_callback=None):
     translated = []
     batch_size = 18
     provider_order = []
@@ -270,7 +273,7 @@ def translate_segments(segments, openrouter_key, progress_callback=None):
                 errors.append(f"OpenRouter: {str(exc)[:160]}")
         if raw is None:
             if not openrouter_key:
-                return free_translate_segments(segments, progress_callback)
+                return free_translate_segments(segments, mymemory_email, progress_callback)
             raise RuntimeError("မြန်မာဘာသာပြန် API မရပါ။ " + " | ".join(errors))
         rows = parse_json_array(raw)
         mapping = {}
@@ -431,6 +434,12 @@ def main():
             st.stop()
 
     uploaded = st.file_uploader("Video တင်ပါ (MP4 / MOV / MKV / WEBM)", type=["mp4", "mov", "mkv", "webm"])
+    mymemory_email = st.text_input(
+        "MYMEMORY_EMAIL (Optional)",
+        value=secret("MYMEMORY_EMAIL"),
+        placeholder="your-email@example.com",
+        help="MyMemory translation quota ပိုမိုရရှိရန် email ထည့်နိုင်ပါတယ်။ မထည့်လည်း Free mode အလုပ်လုပ်ပါမယ်။",
+    ).strip()
     active_providers = []
     if groq_key:
         active_providers.append("Groq Whisper")
@@ -493,7 +502,7 @@ def main():
 
                 status.info("စာသားအပိုင်းတိုင်းကို မြန်မာလို ဘာသာပြန်နေသည်...")
                 segments, translation_provider = translate_segments(
-                    segments, openrouter_key,
+                    segments, openrouter_key, mymemory_email,
                     lambda fraction: set_progress(35 + fraction * 25, "မြန်မာဘာသာပြန်နေသည်"))
                 set_progress(62, f"မြန်မာဘာသာပြန်ပြီးပါပြီ ({translation_provider})")
 
