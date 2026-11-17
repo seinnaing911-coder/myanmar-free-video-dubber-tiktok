@@ -7,7 +7,8 @@ import requests
 import edge_tts
 
 APP_TITLE = "🎬 Myanmar Free Video Dubber"
-MAX_MB = 500
+MAX_MB = 200
+MAX_DURATION_SECONDS = 15 * 60
 GROQ_STT_MODEL = "whisper-large-v3-turbo"
 OPENROUTER_MODEL = "openrouter/free"
 LOCAL_WHISPER_MODEL = "tiny"
@@ -147,7 +148,7 @@ def local_whisper_transcribe(audio_path):
     from faster_whisper import WhisperModel
     model = WhisperModel(secret("LOCAL_WHISPER_MODEL", LOCAL_WHISPER_MODEL),
                          device="cpu", compute_type="int8")
-    segments, _ = model.transcribe(str(audio_path), beam_size=3, vad_filter=True)
+    segments, _ = model.transcribe(str(audio_path), beam_size=1, vad_filter=True)
     return normalize_segments([{"start": s.start, "end": s.end, "text": s.text.strip()}
                                for s in segments if s.text.strip()], probe_duration(audio_path))
 
@@ -442,6 +443,11 @@ def main():
             output_mp3 = work / "myanmar_voice.mp3"
             output_mp4 = work / "myanmar_dubbed_video.mp4"
             duration = probe_duration(video)
+            if duration > MAX_DURATION_SECONDS:
+                raise RuntimeError(
+                    f"Video ကြာချိန်သည် {MAX_DURATION_SECONDS // 60} မိနစ်ထက် မကျော်ရပါ။ "
+                    "Streamlit Cloud resource ကန့်သတ်ချက်ကြောင့် video ကို အပိုင်းတိုများခွဲပြီး ပြန်တင်ပါ။"
+                )
             progress = st.progress(0, text="Video ပြင်ဆင်နေသည်... (0%)")
             status = st.empty()
 
@@ -499,6 +505,14 @@ def main():
                                    file_name=output_name, mime="video/mp4")
                 st.download_button("⬇️ မြန်မာအသံ (MP3)", output_mp3.read_bytes(),
                                    file_name="myanmar_voice.mp3", mime="audio/mpeg")
+            except MemoryError:
+                progress.empty()
+                status.error("Memory မလုံလောက်ပါ။ Video size/ကြာချိန်ကို လျှော့ပြီး ပြန်စမ်းပါ။")
+                st.caption("Streamlit Cloud resource limit ကြောင့် process ရပ်သွားနိုင်ပါသည်။")
+            except subprocess.TimeoutExpired:
+                progress.empty()
+                status.error("လုပ်ဆောင်ချိန်ကျော်လွန်သွားပါသည်။ Video ကို ပိုတိုအောင် ခွဲပြီး ပြန်စမ်းပါ။")
+                st.caption("FFmpeg/Whisper processing သည် Cloud runtime limit ထက် ကြာသွားနိုင်ပါသည်။")
             except Exception as exc:
                 progress.empty()
                 status.error(f"လုပ်ဆောင်မှု မအောင်မြင်ပါ: {exc}")

@@ -15,6 +15,7 @@ Streamlit app: one video upload, timestamped speech recognition, Burmese transla
 - Burmese-script validation blocks output when translation fails, instead of reading the original-language text with a Myanmar voice.
 - Free translation sends adjacent narration lines as context-aware chunks so names, events, and story continuity are preserved better than isolated line translation.
 - TikTok-ready 9:16 export at 1080×1920 with optional 3% center crop and Natural/Warm/Cool/Vivid color grading.
+- Cloud-safe upload guard: maximum 200 MB and 15 minutes per video, with clearer memory/timeout errors.
 
 ## Deploy
 Upload `app.py`, `requirements.txt`, `packages.txt`, and `.streamlit/config.toml` to the connected GitHub repository.
@@ -39,6 +40,7 @@ Free mode has no AI API bill, but the first local Whisper run downloads a model 
 - The uploaded video must contain an audio track with speech for transcription.
 - Speech recognition timestamps may not be perfect. Very long Burmese lines can be shortened by fitting them into the available slot.
 - Streamlit Cloud CPU, memory, execution time, network access and provider quotas can limit large-video processing.
+- For Streamlit Cloud, keep videos below 200 MB and 15 minutes. If processing stops, reboot the app from Manage app and retry with a shorter video or a smaller Whisper model such as `tiny`.
 
 Free mode does not require `GROQ_API_KEY` or `OPENROUTER_API_KEY`; it uses local faster-whisper, free translation, and Edge TTS. The app must be allowed to process without an API key.
 
