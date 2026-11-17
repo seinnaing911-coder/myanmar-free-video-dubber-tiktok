@@ -9,11 +9,7 @@ import edge_tts
 APP_TITLE = "🎬 Myanmar Free Video Dubber"
 MAX_MB = 500
 GROQ_STT_MODEL = "whisper-large-v3-turbo"
-GEMINI_MODEL = "gemini-3.8-flash"
 OPENROUTER_MODEL = "openrouter/free"
-XAI_STT_MODEL = "grok-voice-transcribe-2.0"
-XAI_TTS_VOICE = "eve"
-XAI_TTS_LANGUAGE = "my"
 LOCAL_WHISPER_MODEL = "tiny"
 CHUNK_SECONDS = 480
 
@@ -130,39 +126,6 @@ def groq_transcribe(audio_path, api_key):
     return normalize_segments(result, probe_duration(audio_path))
 
 
-def grok_transcribe(audio_path, api_key):
-    """Transcribe audio with xAI's batch Grok Voice API."""
-    url = "https://api.x.ai/v1/stt"
-    chunks = split_audio(audio_path, audio_path.parent / "grok_audio_chunks")
-    result = []
-    for index, chunk in enumerate(chunks):
-        with open(chunk, "rb") as file_obj:
-            response = requests.post(
-                url,
-                headers={"Authorization": f"Bearer {api_key}"},
-                data={"model": XAI_STT_MODEL},
-                files={"file": (chunk.name, file_obj, "audio/mpeg")},
-                timeout=900,
-            )
-        if response.status_code >= 400:
-            raise RuntimeError(f"Grok STT error {response.status_code}: {response.text[:800]}")
-        data = response.json()
-        offset = index * CHUNK_SECONDS
-        segments = data.get("segments") or []
-        if segments:
-            for item in segments:
-                text = (item.get("text") or "").strip()
-                if text:
-                    result.append({"start": float(item.get("start", 0)) + offset,
-                                   "end": float(item.get("end", item.get("start", 0) + 2)) + offset,
-                                   "text": text})
-        else:
-            text = (data.get("text") or data.get("transcript") or "").strip()
-            if text:
-                result.extend(approximate_segments(text, offset, probe_duration(chunk)))
-    return normalize_segments(result, probe_duration(audio_path))
-
-
 def approximate_segments(text, offset, duration):
     parts = [p.strip() for p in re.split(r"(?<=[.!?。！？])\s+|\n+", text) if p.strip()]
     if not parts:
@@ -224,27 +187,7 @@ def contains_burmese(text):
     return bool(re.search(r"[\u1000-\u109F]", str(text or "")))
 
 
-def call_grok_api(prompt, api_key):
-    response = requests.post(
-        "https://api.x.ai/v1/chat/completions",
-        headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
-        json={"model": "grok-4.7", "messages": [{"role": "user", "content": prompt}],
-              "temperature": 0.2},
-        timeout=300,
-    )
-    if response.status_code >= 400:
-        raise RuntimeError(f"Grok translation error {response.status_code}: {response.text[:700]}")
-    data = response.json()
-    return ((data.get("choices") or [{}])[0].get("message") or {}).get("content", "")
-
-
-def call_translation_api(prompt, provider, api_key):
-    if provider == "Grok":
-        return call_grok_api(prompt, api_key)
-    if provider == "Gemini":
-        from google import genai
-        client = genai.Client(api_key=api_key)
-        return client.models.generate_content(model=GEMINI_MODEL, contents=prompt).text
+def call_openrouter_api(prompt, api_key):
     response = requests.post(
         "https://openrouter.ai/api/v1/chat/completions",
         headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json",
@@ -303,7 +246,7 @@ def free_translate_segments(segments, progress_callback=None):
     return translated, "Free MyMemory autodetect"
 
 
-def translate_segments(segments, grok_key, gemini_key, openrouter_key, progress_callback=None):
+def translate_segments(segments, openrouter_key, progress_callback=None):
     translated = []
     batch_size = 18
     provider_order = []
@@ -318,26 +261,14 @@ def translate_segments(segments, grok_key, gemini_key, openrouter_key, progress_
             json.dumps(source_lines, ensure_ascii=False))
         raw = None
         errors = []
-        if grok_key:
+        if openrouter_key:
             try:
-                raw = call_translation_api(prompt, "Grok", grok_key)
-                provider_order.append("Grok")
-            except Exception as exc:
-                errors.append(f"Grok: {str(exc)[:160]}")
-        if raw is None and gemini_key:
-            try:
-                raw = call_translation_api(prompt, "Gemini", gemini_key)
-                provider_order.append("Gemini")
-            except Exception as exc:
-                errors.append(f"Gemini: {str(exc)[:160]}")
-        if raw is None and openrouter_key:
-            try:
-                raw = call_translation_api(prompt, "OpenRouter", openrouter_key)
+                raw = call_openrouter_api(prompt, openrouter_key)
                 provider_order.append("OpenRouter")
             except Exception as exc:
                 errors.append(f"OpenRouter: {str(exc)[:160]}")
         if raw is None:
-            if not (gemini_key or openrouter_key):
+            if not openrouter_key:
                 return free_translate_segments(segments, progress_callback)
             raise RuntimeError("မြန်မာဘာသာပြန် API မရပါ။ " + " | ".join(errors))
         rows = parse_json_array(raw)
@@ -471,8 +402,6 @@ def main():
     st.write("Video တစ်ခုတည်းတင်ပါ။ မူရင်းအသံအားလုံးကို ဖယ်ရှားပြီး မြန်မာအသံနဲ့ အစားထိုးပေးပါမယ်။")
     st.info("မူရင်းဘာသာစကားအသံကို Final MP4 ထဲ မထည့်ဘဲ မြန်မာအသံတစ်ခုတည်း ထည့်ပေးပါမယ်။ API key မရှိရင် Free mode နဲ့ local processing လုပ်နိုင်ပါတယ်။")
 
-    configured_grok_key = secret("XAI_API_KEY")
-    gemini_key = secret("GEMINI_API_KEY")
     groq_key = secret("GROQ_API_KEY")
     openrouter_key = secret("OPENROUTER_API_KEY")
     password = secret("APP_PASSWORD")
@@ -483,22 +412,10 @@ def main():
             st.stop()
 
     uploaded = st.file_uploader("Video တင်ပါ (MP4 / MOV / MKV / WEBM)", type=["mp4", "mov", "mkv", "webm"])
-    entered_grok_key = st.text_input(
-        "Grok (xAI) API key — ဒီ run အတွက်သာ အသုံးပြုမည်",
-        type="password",
-        placeholder="xai-...",
-        help="Key ကို file ထဲ မရေးပါ။ Streamlit session အတွင်း ဒီ processing run အတွက်သာ အသုံးပြုပါမယ်။"
-    )
-    grok_key = entered_grok_key.strip() or configured_grok_key
-    if configured_grok_key and not entered_grok_key:
-        st.caption("Streamlit Secrets ထဲက XAI_API_KEY ကို အသုံးပြုနေသည်။")
-    elif entered_grok_key:
-        st.caption("ထည့်ထားသော Grok key ကို ဒီ session အတွင်းသာ အသုံးပြုနေသည်။")
     active_providers = []
-    if grok_key:
-        active_providers.append("Grok")
     if groq_key:
-        active_providers.append("Groq fallback")
+        active_providers.append("Groq Whisper")
+    active_providers.append("OpenRouter or Free translation")
     if not active_providers:
         active_providers.append("Free local Whisper → Free translation → Edge TTS")
     st.caption("အသုံးပြုမည့် processing mode: " + " → ".join(active_providers))
@@ -514,7 +431,7 @@ def main():
         st.stop()
 
     if st.button("🎙️ မြန်မာအသံနဲ့ Dubbing လုပ်မယ်", type="primary", disabled=uploaded is None):
-        if not (grok_key or groq_key):
+        if not groq_key:
             st.info("API key မတွေ့ပါ။ Free local Whisper mode ကို အသုံးပြုနေပါတယ်။ ပထမဆုံး run မှာ Whisper model download လုပ်ရနိုင်ပါတယ်။")
 
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -537,29 +454,22 @@ def main():
                 extract_audio(video, original_audio)
                 set_progress(8, "အသံဖိုင် ပြင်ဆင်ပြီးပါပြီ")
 
-                status.info("Grok Voice STT သို့မဟုတ် Free local Whisper ဖြင့် မူရင်းစကားပြောသံနှင့် အချိန်မှတ်တမ်း ထုတ်ယူနေသည်...")
-                try:
-                    if not grok_key:
-                        raise RuntimeError("XAI_API_KEY မရှိပါ")
-                    segments = grok_transcribe(original_audio, grok_key)
-                except Exception as grok_error:
-                    if not groq_key:
-                        status.warning(f"Grok မအောင်မြင်ပါ။ Local Whisper ကို စမ်းသုံးနေသည်။ {str(grok_error)[:180]}")
+                status.info("Groq Whisper သို့မဟုတ် Free local Whisper ဖြင့် မူရင်းစကားပြောသံနှင့် အချိန်မှတ်တမ်း ထုတ်ယူနေသည်...")
+                if groq_key:
+                    try:
+                        segments = groq_transcribe(original_audio, groq_key)
+                    except Exception as groq_error:
+                        status.warning(f"Groq မအောင်မြင်ပါ။ Local Whisper ကို စမ်းသုံးနေသည်။ {str(groq_error)[:180]}")
                         segments = local_whisper_transcribe(original_audio)
-                    else:
-                        status.warning(f"Grok မအောင်မြင်ပါ။ Groq Whisper fallback ကို စမ်းသုံးနေသည်။ {str(grok_error)[:180]}")
-                        try:
-                            segments = groq_transcribe(original_audio, groq_key)
-                        except Exception as groq_error:
-                            status.warning(f"Groq မအောင်မြင်ပါ။ Local Whisper ကို စမ်းသုံးနေသည်။ {str(groq_error)[:180]}")
-                            segments = local_whisper_transcribe(original_audio)
+                else:
+                    segments = local_whisper_transcribe(original_audio)
                 if not segments:
                     raise RuntimeError("မူရင်းစကားပြောသံမှ စာသားမရရှိပါ။ Video ထဲတွင် အသံရှိ/မရှိ စစ်ဆေးပါ။")
                 set_progress(35, f"စကားပြောအပိုင်း {len(segments)} ခု ဖော်ထုတ်ပြီးပါပြီ")
 
                 status.info("စာသားအပိုင်းတိုင်းကို မြန်မာလို ဘာသာပြန်နေသည်...")
                 segments, translation_provider = translate_segments(
-                    segments, grok_key, gemini_key, openrouter_key,
+                    segments, openrouter_key,
                     lambda fraction: set_progress(35 + fraction * 25, "မြန်မာဘာသာပြန်နေသည်"))
                 set_progress(62, f"မြန်မာဘာသာပြန်ပြီးပါပြီ ({translation_provider})")
 
