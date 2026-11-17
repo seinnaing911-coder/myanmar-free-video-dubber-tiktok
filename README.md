@@ -15,6 +15,7 @@ Streamlit app: one video upload, timestamped speech recognition, Burmese transla
 - Burmese-script validation blocks output when translation fails, instead of reading the original-language text with a Myanmar voice.
 - Free translation sends adjacent narration lines as context-aware chunks so names, events, and story continuity are preserved better than isolated line translation.
 - TikTok-ready 9:16 export at 1080×1920 with optional 3% center crop and Natural/Warm/Cool/Vivid color grading.
+- A generated JPG thumbnail using a frame from the final video and an auto-derived Burmese title from the opening translated narration; users can override the title.
 - Cloud-safe upload guard: maximum 200 MB and 15 minutes per video, with clearer memory/timeout errors.
 
 ## Deploy
