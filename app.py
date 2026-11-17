@@ -188,67 +188,6 @@ def contains_burmese(text):
     return bool(re.search(r"[\u1000-\u109F]", str(text or "")))
 
 
-def derive_thumbnail_title(segments):
-    """Create a short Burmese title from the opening translated narration."""
-    opening = " ".join(str(seg.get("burmese", "")).strip() for seg in segments[:3]).strip()
-    opening = re.sub(r"\s+", " ", opening)
-    if not opening:
-        return "မြန်မာဗီဒီယို"
-    # Keep the title readable on a phone-sized thumbnail.
-    return opening if len(opening) <= 52 else opening[:52].rstrip(" ၊၊။.!?") + "…"
-
-
-def find_myanmar_font():
-    candidates = [
-        "/usr/share/fonts/truetype/noto/NotoSansMyanmar-Regular.ttf",
-        "/usr/share/fonts/truetype/padauk/Padauk-Regular.ttf",
-    ]
-    for candidate in candidates:
-        if Path(candidate).exists():
-            return candidate
-    raise RuntimeError("Myanmar font မတွေ့ပါ။ packages.txt ထဲတွင် fonts-noto-core ထည့်ထားကြောင်း စစ်ပါ။")
-
-
-def wrap_thumbnail_title(title, max_chars=26):
-    words = [part for part in re.split(r"\s+", title.strip()) if part]
-    lines = []
-    current = ""
-    for word in words:
-        candidate = f"{current} {word}".strip()
-        if current and len(candidate) > max_chars:
-            lines.append(current)
-            current = word
-        else:
-            current = candidate
-    if current:
-        lines.append(current)
-    if not lines:
-        lines = [title.strip() or "မြန်မာဗီဒီယို"]
-    return "\n".join(lines[:3])
-
-
-def create_thumbnail(video_path, thumbnail_path, title, duration):
-    font_path = find_myanmar_font()
-    title_file = thumbnail_path.with_suffix(".txt")
-    title_file.write_text(wrap_thumbnail_title(title), encoding="utf-8")
-    safe_font = font_path.replace("\\", "\\\\").replace(":", "\\:").replace("'", "\\\\'")
-    safe_title_file = str(title_file).replace("\\", "\\\\").replace(":", "\\:").replace("'", "\\\\'")
-    drawtext = (
-        f"drawtext=fontfile='{safe_font}':textfile='{safe_title_file}':"
-        "fontcolor=white:fontsize=72:line_spacing=14:"
-        "borderw=4:bordercolor=black@0.85:box=1:boxcolor=black@0.55:boxborderw=28:"
-        "x=(w-text_w)/2:y=h*0.10"
-    )
-    seek = max(0.0, min(float(duration) * 0.35, max(0.0, float(duration) - 0.5)))
-    run_cmd([
-        ffmpeg_path(), "-y", "-ss", f"{seek:.3f}", "-i", str(video_path),
-        "-frames:v", "1", "-vf", drawtext, "-q:v", "2", str(thumbnail_path)
-    ], timeout=180)
-    title_file.unlink(missing_ok=True)
-    if not thumbnail_path.exists() or thumbnail_path.stat().st_size < 10_000:
-        raise RuntimeError("Thumbnail ဖိုင် မထွက်လာပါ။")
-
-
 def call_openrouter_api(prompt, api_key):
     response = requests.post(
         "https://openrouter.ai/api/v1/chat/completions",
@@ -378,7 +317,6 @@ def build_voice_track(segments, voice, workdir, duration, progress_callback=None
     tts_dir = workdir / "tts_segments"
     tts_dir.mkdir(exist_ok=True)
     prepared = []
-    cursor = 0.0
     for index, seg in enumerate(segments):
         if not contains_burmese(seg.get("burmese", "")):
             raise RuntimeError(f"အပိုင်း {index + 1} တွင် မြန်မာစာမရှိပါ။ Final video မထုတ်ပါ။")
@@ -388,49 +326,64 @@ def build_voice_track(segments, voice, workdir, duration, progress_callback=None
             raise RuntimeError("မြန်မာ Edge TTS အသံဖိုင် မထွက်လာပါ။ Network သို့မဟုတ် TTS service ကို စစ်ပါ။")
         tts_duration = probe_duration(out)
         requested_start = max(0.0, min(duration, float(seg["start"])))
-        start = max(requested_start, cursor)
-        if index + 1 < len(segments):
-            next_start = max(start + 0.25, min(duration, float(segments[index + 1]["start"])))
-            available = max(0.25, next_start - start)
-        else:
-            available = max(0.25, duration - start)
-        speed = max(1.0, tts_duration / available)
-        adjusted = out
-        adjusted_duration = tts_duration / speed
-        if speed > 1.02 or adjusted_duration > available:
-            adjusted = tts_dir / f"voice_{index:04d}_fit.mp3"
-            tempo_filters = []
-            remaining_speed = speed
-            while remaining_speed > 2.0:
-                tempo_filters.append("atempo=2.0")
-                remaining_speed /= 2.0
-            tempo_filters.append(f"atempo={max(1.0, remaining_speed):.3f}")
-            run_cmd([ffmpeg_path(), "-y", "-i", str(out), "-af",
-                     ",".join(tempo_filters) +
-                     f",atrim=duration={available:.3f},asetpts=PTS-STARTPTS",
-                     "-c:a", "libmp3lame", "-b:a", "96k", str(adjusted)], timeout=180)
-        prepared.append((adjusted, int(start * 1000)))
-        cursor = min(duration, start + min(available, adjusted_duration))
+        # Keep the generated Burmese speech at its natural speed. The matching
+        # video window is retimed later instead of speeding up the voice.
+        prepared.append((out, requested_start, tts_duration))
         if progress_callback:
             progress_callback((index + 1) / len(segments))
     return prepared
 
 
-def render_dubbed_video(source, prepared_audio, duration, output_path,
+def render_dubbed_video(source, segments, prepared_audio, duration, output_path,
                         export_mode="TikTok 9:16", color_style="Natural", slight_crop=True):
-    args = [ffmpeg_path(), "-y", "-i", str(source), "-f", "lavfi", "-t", str(duration),
-            "-i", "anullsrc=r=24000:cl=mono"]
-    for audio_path, _ in prepared_audio:
+    if not segments or len(segments) != len(prepared_audio):
+        raise RuntimeError("Video/audio segment count မကိုက်ညီပါ။")
+
+    args = [ffmpeg_path(), "-y", "-i", str(source)]
+    for audio_path, _, _ in prepared_audio:
         args += ["-i", str(audio_path)]
-    filters = [f"[1:a]atrim=duration={duration:.3f},asetpts=PTS-STARTPTS[base]"]
-    mix_labels = ["[base]"]
-    for i, (_, delay_ms) in enumerate(prepared_audio, start=2):
-        label = f"voice{i}"
-        filters.append(f"[{i}:a]aresample=24000,adelay=delays={delay_ms}:all=1[{label}]")
-        mix_labels.append(f"[{label}]")
-    filters.append("".join(mix_labels) +
-                   f"amix=inputs={len(mix_labels)}:duration=first:dropout_transition=0:normalize=0,"
-                   f"atrim=duration={duration:.3f},asetpts=PTS-STARTPTS,"
+
+    video_labels = []
+    audio_labels = []
+    filters = []
+    segment_count = len(segments)
+    first_start = max(0.0, min(duration, float(segments[0]["start"])))
+    if first_start > 0.05:
+        filters.append(f"[0:v]trim=start=0:end={first_start:.3f},setpts=PTS-STARTPTS[vprefix]")
+        video_labels.append("[vprefix]")
+        filters.append(f"anullsrc=r=24000:cl=mono,atrim=duration={first_start:.3f},asetpts=PTS-STARTPTS[aprefix]")
+        audio_labels.append("[aprefix]")
+
+    for index, (seg, prepared) in enumerate(zip(segments, prepared_audio)):
+        source_start = max(0.0, min(duration, float(seg["start"])))
+        if index + 1 < segment_count:
+            source_end = max(source_start + 0.25, min(duration, float(segments[index + 1]["start"])))
+        else:
+            source_end = max(source_start + 0.25, min(duration, float(seg.get("end", source_start + 0.25))))
+        source_span = max(0.25, source_end - source_start)
+        voice_duration = max(0.25, float(prepared[2]))
+        speed_ratio = voice_duration / source_span
+        filters.append(
+            f"[0:v]trim=start={source_start:.3f}:end={source_end:.3f},"
+            f"setpts=PTS-STARTPTS,setpts=PTS*{speed_ratio:.6f}[v{index}]"
+        )
+        video_labels.append(f"[v{index}]")
+        audio_input_index = index + 1
+        filters.append(
+            f"[{audio_input_index}:a]aresample=24000,asetpts=PTS-STARTPTS[a{index}]"
+        )
+        audio_labels.append(f"[a{index}]")
+
+    last_end = max(0.0, min(duration, float(segments[-1].get("end", segments[-1]["start"]))))
+    if duration - last_end > 0.05:
+        filters.append(f"[0:v]trim=start={last_end:.3f}:end={duration:.3f},setpts=PTS-STARTPTS[vtail]")
+        video_labels.append("[vtail]")
+        tail_duration = duration - last_end
+        filters.append(f"anullsrc=r=24000:cl=mono,atrim=duration={tail_duration:.3f},asetpts=PTS-STARTPTS[atail]")
+        audio_labels.append("[atail]")
+
+    filters.append("".join(video_labels) + f"concat=n={len(video_labels)}:v=1:a=0[vout]")
+    filters.append("".join(audio_labels) + f"concat=n={len(audio_labels)}:v=0:a=1,"
                    "loudnorm=I=-16:TP=-1.5:LRA=7[aout]")
 
     if export_mode == "TikTok 9:16 (1080x1920)":
@@ -451,9 +404,13 @@ def render_dubbed_video(source, prepared_audio, duration, output_path,
         visual_filters.append("eq=contrast=1.04:saturation=1.08:brightness=0.01")
 
     video_filter = ",".join(visual_filters) if visual_filters else "null"
+    if video_filter != "null":
+        filters.append(f"[vout]{video_filter}[vfinal]")
+        video_map = "[vfinal]"
+    else:
+        video_map = "[vout]"
     args += ["-filter_complex", ";".join(filters)]
-    args += ["-map", "0:v:0", "-map", "[aout]",
-             "-t", f"{duration:.3f}", "-vf", video_filter,
+    args += ["-map", video_map, "-map", "[aout]",
              "-c:v", "libx264", "-preset", "veryfast", "-crf", "22",
              "-c:a", "aac", "-b:a", "160k", "-movflags", "+faststart", "-shortest", str(output_path)]
     run_cmd(args, timeout=7200)
@@ -486,11 +443,6 @@ def main():
     color_style = st.selectbox("Color style", ["Natural", "Warm", "Cool", "Vivid"])
     slight_crop = st.checkbox("Slight center crop (3%)", value=True,
                               help="Portrait framing အတွက်သာ အသုံးပြုသည်။ ကိုယ်ပိုင် သို့မဟုတ် လိုင်စင်ရှိသော video များအတွက် သုံးပါ။")
-    custom_thumbnail_title = st.text_input(
-        "Thumbnail ခေါင်းစဉ် (optional)",
-        placeholder="မထည့်လျှင် video transcript အစပိုင်းကနေ အလိုအလျောက်ရွေးမယ်",
-        help="Burmese title ကို ကိုယ်တိုင်ထည့်နိုင်ပါတယ်။ မထည့်လျှင် ဘာသာပြန်ပြီးသား အစပိုင်းစာသားကို အသုံးပြုပါမယ်။"
-    )
     st.caption("ဒီ export controls တွေဟာ platform formatting နဲ့ creative grading အတွက်သာ ဖြစ်ပြီး မူပိုင်ခွင့်စစ်ဆေးမှုကို ရှောင်ရန် မဟုတ်ပါ။")
 
     if uploaded and uploaded.size > MAX_MB * 1024 * 1024:
@@ -508,7 +460,6 @@ def main():
             original_audio = work / "original_for_transcription.mp3"
             output_mp3 = work / "myanmar_voice.mp3"
             output_mp4 = work / "myanmar_dubbed_video.mp4"
-            output_thumbnail = work / "myanmar_dubbed_thumbnail.jpg"
             duration = probe_duration(video)
             if duration > MAX_DURATION_SECONDS:
                 raise RuntimeError(
@@ -545,7 +496,6 @@ def main():
                     segments, openrouter_key,
                     lambda fraction: set_progress(35 + fraction * 25, "မြန်မာဘာသာပြန်နေသည်"))
                 set_progress(62, f"မြန်မာဘာသာပြန်ပြီးပါပြီ ({translation_provider})")
-                thumbnail_title = custom_thumbnail_title.strip() or derive_thumbnail_title(segments)
 
                 voice = "my-MM-NilarNeural" if voice_label.startswith("နီလာ") else "my-MM-ThihaNeural"
                 status.info("မြန်မာအသံ အပိုင်းလိုက် ဖန်တီးပြီး မူရင်းအချိန်နဲ့ ညှိနေသည်...")
@@ -555,11 +505,10 @@ def main():
                 set_progress(84, "မြန်မာအသံ ပြင်ဆင်ပြီးပါပြီ")
 
                 status.info("မူရင်းအသံ Track ကို ဖယ်ရှားပြီး မြန်မာအသံတစ်ခုတည်း ထည့်နေသည်...")
-                render_dubbed_video(video, prepared_audio, duration, output_mp4,
+                render_dubbed_video(video, segments, prepared_audio, duration, output_mp4,
                                     export_mode=export_mode, color_style=color_style,
                                     slight_crop=slight_crop)
                 validation_note = validate_final_video(output_mp4, duration)
-                create_thumbnail(output_mp4, output_thumbnail, thumbnail_title, duration)
                 # Export a standalone MP3 from the final MP4 audio, ensuring it matches the final mix.
                 run_cmd([ffmpeg_path(), "-y", "-i", str(output_mp4), "-vn", "-c:a", "libmp3lame",
                          "-b:a", "160k", str(output_mp3)], timeout=1200)
@@ -569,13 +518,9 @@ def main():
                 status.success(f"Dubbing အောင်မြင်ပါပြီ။ Final audio စစ်ဆေးပြီးပါပြီ ({validation_note})")
                 st.subheader("Final Myanmar Dubbed Video")
                 st.video(str(output_mp4))
-                st.caption(f"Thumbnail title: {thumbnail_title}")
-                st.image(str(output_thumbnail), caption="Generated thumbnail", use_container_width=True)
                 output_name = "myanmar_dubbed_tiktok_9x16.mp4" if export_mode.startswith("TikTok") else "myanmar_dubbed_video.mp4"
                 st.download_button("⬇️ မြန်မာအသံ Video (MP4)", output_mp4.read_bytes(),
                                    file_name=output_name, mime="video/mp4")
-                st.download_button("⬇️ ခေါင်းစဉ်ပါ Thumbnail (JPG)", output_thumbnail.read_bytes(),
-                                   file_name="myanmar_dubbed_thumbnail.jpg", mime="image/jpeg")
                 st.download_button("⬇️ မြန်မာအသံ (MP3)", output_mp3.read_bytes(),
                                    file_name="myanmar_voice.mp3", mime="audio/mpeg")
             except MemoryError:
