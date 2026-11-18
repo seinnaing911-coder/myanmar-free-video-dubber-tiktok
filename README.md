@@ -4,6 +4,7 @@ Streamlit app: one video upload, timestamped speech recognition, Burmese transla
 
 ## Included
 - One MP4 / MOV / MKV / WEBM upload.
+- Optional Gemini API key password field next to the video uploader; a key entered there is used for the current session and takes priority over the saved app secret.
 - Groq Whisper transcription with local faster-whisper fallback.
 - OpenRouter translation with free MyMemory fallback.
 - Burmese Edge TTS voices (Nilar and Thiha) for reliable Myanmar speech output.
@@ -25,6 +26,8 @@ Set these in Streamlit Cloud > App > Settings > Secrets:
 ```toml
 # Optional. The default tiny model is fastest for free local mode.
 LOCAL_WHISPER_MODEL = "tiny"
+GEMINI_API_KEY = "your-gemini-key"
+GEMINI_MODEL = "gemini-3.8-flash"
 GROQ_API_KEY = "your-groq-key"
 OPENROUTER_API_KEY = "your-openrouter-key"
 APP_PASSWORD = "your-private-password"
@@ -35,7 +38,7 @@ Keep API keys private. Do not commit real keys to GitHub.
 
 ## Provider order
 
-The app uses Groq Whisper when `GROQ_API_KEY` is configured, otherwise it uses local faster-whisper. OpenRouter is used for Burmese translation when `OPENROUTER_API_KEY` is available; otherwise it uses MyMemory autodetect-to-Burmese translation. Burmese Edge TTS generates the replacement voice in both API and no-key Free modes. The final MP4 never maps the original audio track; only the generated Burmese voice is included.
+The app uses Groq Whisper when `GROQ_API_KEY` is configured, otherwise it uses local faster-whisper. For Burmese translation, Gemini is tried first when `GEMINI_API_KEY` is available, followed by OpenRouter when configured, and finally MyMemory autodetect-to-Burmese translation. If a configured API fails, the next fallback is attempted automatically. Burmese Edge TTS generates the replacement voice in both API and no-key Free modes. The final MP4 never maps the original audio track; only the generated Burmese voice is included.
 
 Free mode has no AI API bill, but the first local Whisper run downloads a model and CPU processing is slower. Public free translation endpoints can also rate-limit heavy use. For the fastest mode, configure `GROQ_API_KEY` and optionally `OPENROUTER_API_KEY`.
 

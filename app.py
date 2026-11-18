@@ -10,6 +10,7 @@ APP_TITLE = "🎬 Myanmar Free Video Dubber"
 MAX_MB = 200
 MAX_DURATION_SECONDS = 15 * 60
 GROQ_STT_MODEL = "whisper-large-v3-turbo"
+GEMINI_MODEL = "gemini-3.8-flash"
 OPENROUTER_MODEL = "openrouter/free"
 LOCAL_WHISPER_MODEL = "tiny"
 CHUNK_SECONDS = 480
@@ -188,6 +189,33 @@ def contains_burmese(text):
     return bool(re.search(r"[\u1000-\u109F]", str(text or "")))
 
 
+def call_gemini_api(prompt, api_key, model=GEMINI_MODEL):
+    response = requests.post(
+        f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent",
+        params={"key": api_key},
+        headers={"Content-Type": "application/json"},
+        json={
+            "contents": [{"role": "user", "parts": [{"text": prompt}]}],
+            "generationConfig": {
+                "temperature": 0.2,
+                "responseMimeType": "application/json",
+            },
+        },
+        timeout=240,
+    )
+    if response.status_code >= 400:
+        raise RuntimeError(f"Gemini error {response.status_code}: {response.text[:700]}")
+    data = response.json()
+    candidates = data.get("candidates") or []
+    if not candidates:
+        raise RuntimeError("Gemini returned no candidates")
+    parts = ((candidates[0].get("content") or {}).get("parts") or [])
+    text = "".join(str(part.get("text", "")) for part in parts).strip()
+    if not text:
+        raise RuntimeError("Gemini returned empty content")
+    return text
+
+
 def call_openrouter_api(prompt, api_key):
     response = requests.post(
         "https://openrouter.ai/api/v1/chat/completions",
@@ -250,7 +278,8 @@ def free_translate_segments(segments, mymemory_email="", progress_callback=None)
     return translated, "Free MyMemory autodetect"
 
 
-def translate_segments(segments, openrouter_key, mymemory_email="", progress_callback=None):
+def translate_segments(segments, gemini_key="", openrouter_key="", mymemory_email="",
+                       gemini_model=GEMINI_MODEL, progress_callback=None):
     translated = []
     batch_size = 18
     provider_order = []
@@ -265,16 +294,27 @@ def translate_segments(segments, openrouter_key, mymemory_email="", progress_cal
             json.dumps(source_lines, ensure_ascii=False))
         raw = None
         errors = []
-        if openrouter_key:
+        if gemini_key:
+            try:
+                raw = call_gemini_api(prompt, gemini_key, gemini_model)
+                provider_order.append("Gemini")
+            except Exception as exc:
+                errors.append(f"Gemini: {str(exc)[:160]}")
+        if raw is None and openrouter_key:
             try:
                 raw = call_openrouter_api(prompt, openrouter_key)
                 provider_order.append("OpenRouter")
             except Exception as exc:
                 errors.append(f"OpenRouter: {str(exc)[:160]}")
         if raw is None:
-            if not openrouter_key:
+            if not gemini_key and not openrouter_key:
                 return free_translate_segments(segments, mymemory_email, progress_callback)
-            raise RuntimeError("မြန်မာဘာသာပြန် API မရပါ။ " + " | ".join(errors))
+            try:
+                free_translated, _ = free_translate_segments(segments, mymemory_email, progress_callback)
+                return free_translated, " / ".join(dict.fromkeys(provider_order + ["Free MyMemory"]))
+            except Exception as free_error:
+                errors.append(f"MyMemory: {str(free_error)[:160]}")
+                raise RuntimeError("မြန်မာဘာသာပြန် API မရပါ။ " + " | ".join(errors))
         rows = parse_json_array(raw)
         mapping = {}
         for row in rows:
@@ -425,6 +465,8 @@ def main():
     st.info("မူရင်းဘာသာစကားအသံကို Final MP4 ထဲ မထည့်ဘဲ မြန်မာအသံတစ်ခုတည်း ထည့်ပေးပါမယ်။ API key မရှိရင် Free mode နဲ့ local processing လုပ်နိုင်ပါတယ်။")
 
     groq_key = secret("GROQ_API_KEY")
+    saved_gemini_key = secret("GEMINI_API_KEY")
+    gemini_model = secret("GEMINI_MODEL", GEMINI_MODEL)
     openrouter_key = secret("OPENROUTER_API_KEY")
     password = secret("APP_PASSWORD")
     if password:
@@ -434,6 +476,14 @@ def main():
             st.stop()
 
     uploaded = st.file_uploader("Video တင်ပါ (MP4 / MOV / MKV / WEBM)", type=["mp4", "mov", "mkv", "webm"])
+    gemini_input_key = st.text_input(
+        "Gemini API Key (Optional)",
+        value="",
+        type="password",
+        placeholder="AIza...",
+        help="ဒီနေရာမှာထည့်သော key ကို ဒီ session အတွင်းသာ အသုံးပြုပါမယ်။ မထည့်ထားရင် app secret ထဲက key ကို အသုံးပြုပါမယ်။",
+    ).strip()
+    gemini_key = gemini_input_key or saved_gemini_key
     mymemory_email = st.text_input(
         "MYMEMORY_EMAIL (Optional)",
         value=secret("MYMEMORY_EMAIL"),
@@ -443,7 +493,11 @@ def main():
     active_providers = []
     if groq_key:
         active_providers.append("Groq Whisper")
-    active_providers.append("OpenRouter or Free translation")
+    if gemini_key:
+        active_providers.append(f"Gemini ({gemini_model})")
+    if openrouter_key:
+        active_providers.append("OpenRouter fallback")
+    active_providers.append("Free MyMemory fallback")
     if not active_providers:
         active_providers.append("Free local Whisper → Free translation → Edge TTS")
     st.caption("အသုံးပြုမည့် processing mode: " + " → ".join(active_providers))
@@ -502,7 +556,7 @@ def main():
 
                 status.info("စာသားအပိုင်းတိုင်းကို မြန်မာလို ဘာသာပြန်နေသည်...")
                 segments, translation_provider = translate_segments(
-                    segments, openrouter_key, mymemory_email,
+                    segments, gemini_key, openrouter_key, mymemory_email, gemini_model,
                     lambda fraction: set_progress(35 + fraction * 25, "မြန်မာဘာသာပြန်နေသည်"))
                 set_progress(62, f"မြန်မာဘာသာပြန်ပြီးပါပြီ ({translation_provider})")
 
