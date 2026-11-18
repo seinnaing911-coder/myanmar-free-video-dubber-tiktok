@@ -312,49 +312,45 @@ def translate_segments(segments, gemini_key="", openrouter_key="", grok_key="", 
             "Do not merge, split, reorder, or omit the numbered lines. "
             "Return ONLY a JSON array with objects containing id and myanmar. Keep every id.\n" +
             json.dumps(source_lines, ensure_ascii=False))
-        raw = None
         errors = []
+        providers = []
         if gemini_key:
+            providers.append(("Gemini", lambda: call_gemini_api(prompt, gemini_key, gemini_model)))
+        if grok_key:
+            providers.append(("Grok", lambda: call_grok_api(prompt, grok_key, grok_model)))
+        if openrouter_key:
+            providers.append(("OpenRouter", lambda: call_openrouter_api(prompt, openrouter_key)))
+
+        batch_translation = None
+        for provider_name, provider_call in providers:
             try:
-                raw = call_gemini_api(prompt, gemini_key, gemini_model)
-                provider_order.append("Gemini")
+                rows = parse_json_array(provider_call())
+                mapping = {}
+                for row in rows:
+                    try:
+                        mapping[int(row.get("id"))] = str(row.get("myanmar", row.get("translation", ""))).strip()
+                    except Exception:
+                        continue
+                translated_batch = []
+                for i, seg in enumerate(batch):
+                    burmese = mapping.get(i, "")
+                    if not burmese or not contains_burmese(burmese):
+                        raise RuntimeError(f"အပိုင်း {i + 1} အတွက် မြန်မာစာ response မပြည့်စုံပါ")
+                    translated_batch.append({**seg, "burmese": burmese})
+                batch_translation = translated_batch
+                provider_order.append(provider_name)
+                break
             except Exception as exc:
-                errors.append(f"Gemini: {str(exc)[:160]}")
-        if raw is None and grok_key:
-            try:
-                raw = call_grok_api(prompt, grok_key, grok_model)
-                provider_order.append("Grok")
-            except Exception as exc:
-                errors.append(f"Grok: {str(exc)[:160]}")
-        if raw is None and openrouter_key:
-            try:
-                raw = call_openrouter_api(prompt, openrouter_key)
-                provider_order.append("OpenRouter")
-            except Exception as exc:
-                errors.append(f"OpenRouter: {str(exc)[:160]}")
-        if raw is None:
-            if not gemini_key and not openrouter_key:
-                return free_translate_segments(segments, mymemory_email, progress_callback)
+                errors.append(f"{provider_name}: {str(exc)[:160]}")
+
+        if batch_translation is None:
             try:
                 free_translated, _ = free_translate_segments(segments, mymemory_email, progress_callback)
                 return free_translated, " / ".join(dict.fromkeys(provider_order + ["Free MyMemory"]))
             except Exception as free_error:
                 errors.append(f"MyMemory: {str(free_error)[:160]}")
-                raise RuntimeError("မြန်မာဘာသာပြန် API မရပါ။ " + " | ".join(errors))
-        rows = parse_json_array(raw)
-        mapping = {}
-        for row in rows:
-            try:
-                mapping[int(row.get("id"))] = str(row.get("myanmar", row.get("translation", ""))).strip()
-            except Exception:
-                continue
-        for i, seg in enumerate(batch):
-            burmese = mapping.get(i, "")
-            if not burmese:
-                raise RuntimeError(f"AI ဘာသာပြန်ရလဒ်တွင် အပိုင်း {i + 1} မပါပါ။")
-            if not contains_burmese(burmese):
-                raise RuntimeError(f"AI ဘာသာပြန်ရလဒ်သည် မြန်မာစာမဟုတ်ပါ (အပိုင်း {i + 1})။")
-            translated.append({**seg, "burmese": burmese})
+                raise RuntimeError("မြန်မာဘာသာပြန် API မရပါ။ " + " | ".join(errors[:4]))
+        translated.extend(batch_translation)
         if progress_callback:
             progress_callback(min(1.0, (start + len(batch)) / len(segments)))
     provider = " / ".join(dict.fromkeys(provider_order)) or "AI"
