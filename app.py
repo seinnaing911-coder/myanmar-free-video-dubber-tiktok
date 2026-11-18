@@ -197,19 +197,28 @@ def contains_burmese(text):
 
 
 def call_gemini_api(prompt, api_key, model=GEMINI_MODEL):
-    response = requests.post(
-        f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent",
-        params={"key": api_key},
-        headers={"Content-Type": "application/json"},
-        json={
-            "contents": [{"role": "user", "parts": [{"text": prompt}]}],
-            "generationConfig": {
-                "temperature": 0.2,
-                "responseMimeType": "application/json",
+    last_response = None
+    for attempt in range(3):
+        response = requests.post(
+            f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent",
+            params={"key": api_key},
+            headers={"Content-Type": "application/json"},
+            json={
+                "contents": [{"role": "user", "parts": [{"text": prompt}]}],
+                "generationConfig": {
+                    "temperature": 0.2,
+                    "responseMimeType": "application/json",
+                },
             },
-        },
-        timeout=240,
-    )
+            timeout=120,
+        )
+        if response.status_code < 400:
+            break
+        last_response = response
+        if response.status_code not in (429, 500, 502, 503, 504) or attempt == 2:
+            raise RuntimeError(f"Gemini error {response.status_code}: {response.text[:700]}")
+        time.sleep(2 + attempt * 3)
+    response = last_response if last_response is not None and last_response.status_code >= 400 else response
     if response.status_code >= 400:
         raise RuntimeError(f"Gemini error {response.status_code}: {response.text[:700]}")
     data = response.json()
@@ -489,7 +498,7 @@ def main():
     groq_key = secret("GROQ_API_KEY")
     saved_gemini_key = secret("GEMINI_API_KEY")
     gemini_model = secret("GEMINI_MODEL", GEMINI_MODEL)
-    openrouter_key = secret("OPENROUTER_API_KEY")
+    saved_openrouter_key = secret("OPENROUTER_API_KEY")
     saved_grok_key = secret("GROK_API_KEY")
     grok_model = secret("GROK_MODEL", GROK_MODEL)
     password = secret("APP_PASSWORD")
@@ -514,6 +523,12 @@ def main():
         help="Gemini နှင့် OpenRouter မရမှသာ Burmese translation အတွက် အသုံးပြုပါမယ်။",
     ).strip()
     grok_key = grok_input_key or saved_grok_key
+    openrouter_input_key = st.text_input(
+        "OpenRouter API Key — Translation fallback (Optional)", value="", type="password",
+        placeholder="sk-or-...",
+        help="Gemini နှင့် Grok မရမှသာ Burmese translation အတွက် အသုံးပြုပါမယ်။",
+    ).strip()
+    openrouter_key = openrouter_input_key or saved_openrouter_key
     mymemory_email = st.text_input(
         "MYMEMORY_EMAIL (Optional)",
         value=secret("MYMEMORY_EMAIL"),

@@ -4,7 +4,7 @@ Streamlit app: one video upload, timestamped speech recognition, Burmese transla
 
 ## Included
 - One MP4 / MOV / MKV / WEBM upload.
-- Optional Gemini API key password field next to the video uploader; Gemini is used only for natural Burmese translation, while speech recognition, TTS, and video rendering continue to use their existing providers. A key entered there is used for the current session and takes priority over the saved app secret.
+- Optional Gemini, Grok, and OpenRouter API key password fields are available next to the video uploader. These keys are used only for Burmese translation, while speech recognition, TTS, and video rendering continue to use their existing providers. Keys entered there are used for the current session and take priority over saved app secrets.
 - Groq Whisper transcription with local faster-whisper fallback.
 - OpenRouter translation with free MyMemory fallback.
 - Burmese Edge TTS voices (Nilar and Thiha) for reliable Myanmar speech output.
