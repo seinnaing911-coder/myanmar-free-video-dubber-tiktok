@@ -228,26 +228,6 @@ def call_openrouter_api(prompt, api_key):
     return response.json()["choices"][0]["message"]["content"]
 
 
-def generate_title_suggestions(segments, api_key, model=GEMINI_MODEL):
-    translated_text = "\n".join(seg.get("burmese", "") for seg in segments if seg.get("burmese"))
-    translated_text = translated_text[:14000]
-    prompt = (
-        "Based on the following Burmese video translation, write exactly 3 short, catchy Burmese titles. "
-        "Keep each title concise and focused on the main point. Do not invent facts, names, or events. "
-        "Return ONLY a JSON array of 3 strings, with no markdown or explanation.\n\n" + translated_text
-    )
-    rows = parse_json_array(call_gemini_api(prompt, api_key, model))
-    titles = []
-    for row in rows:
-        title = row.get("title", "") if isinstance(row, dict) else row
-        title = re.sub(r"\s+", " ", str(title)).strip()
-        if title and contains_burmese(title):
-            titles.append(title[:120])
-    if len(titles) < 3:
-        raise RuntimeError("Gemini title response did not contain 3 Burmese titles")
-    return titles[:3]
-
-
 @lru_cache(maxsize=256)
 def free_translate_text(text, mymemory_email=""):
     """Translate to Burmese through MyMemory autodetect without Google rate limits."""
@@ -579,14 +559,6 @@ def main():
                     segments, gemini_key, openrouter_key, mymemory_email, gemini_model,
                     lambda fraction: set_progress(35 + fraction * 25, "မြန်မာဘာသာပြန်နေသည်"))
                 set_progress(62, f"မြန်မာဘာသာပြန်ပြီးပါပြီ ({translation_provider})")
-                if gemini_key and "Gemini" in translation_provider:
-                    try:
-                        title_suggestions = generate_title_suggestions(segments, gemini_key, gemini_model)
-                        st.subheader("Gemini မှ အကြံပြုသော ခေါင်းစဉ်များ")
-                        for index, title in enumerate(title_suggestions, 1):
-                            st.write(f"{index}. {title}")
-                    except Exception as title_error:
-                        st.caption(f"ခေါင်းစဉ်အကြံပြုချက် မရပါ။ Dubbing ကို ဆက်လုပ်နေသည်။ {str(title_error)[:120]}")
 
                 voice = "my-MM-NilarNeural" if voice_label.startswith("နီလာ") else "my-MM-ThihaNeural"
                 status.info("မြန်မာအသံ အပိုင်းလိုက် ဖန်တီးပြီး မူရင်းအချိန်နဲ့ ညှိနေသည်...")
