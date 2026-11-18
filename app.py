@@ -14,6 +14,7 @@ GROQ_STT_MODEL = "whisper-large-v3-turbo"
 GEMINI_MODEL = "gemini-3.8-flash"
 OPENROUTER_MODEL = "openrouter/free"
 GROK_MODEL = "grok-4.7"
+TRANSLATION_TIMEOUT_SECONDS = 60
 LOCAL_WHISPER_MODEL = "tiny"
 CHUNK_SECONDS = 480
 
@@ -198,7 +199,7 @@ def contains_burmese(text):
 
 def call_gemini_api(prompt, api_key, model=GEMINI_MODEL):
     last_response = None
-    for attempt in range(3):
+    for attempt in range(2):
         response = requests.post(
             f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent",
             params={"key": api_key},
@@ -210,14 +211,14 @@ def call_gemini_api(prompt, api_key, model=GEMINI_MODEL):
                     "responseMimeType": "application/json",
                 },
             },
-            timeout=120,
+            timeout=TRANSLATION_TIMEOUT_SECONDS,
         )
         if response.status_code < 400:
             break
         last_response = response
-        if response.status_code not in (429, 500, 502, 503, 504) or attempt == 2:
+        if response.status_code not in (429, 500, 502, 503, 504) or attempt == 1:
             raise RuntimeError(f"Gemini error {response.status_code}: {response.text[:700]}")
-        time.sleep(2 + attempt * 3)
+        time.sleep(2)
     response = last_response if last_response is not None and last_response.status_code >= 400 else response
     if response.status_code >= 400:
         raise RuntimeError(f"Gemini error {response.status_code}: {response.text[:700]}")
@@ -238,7 +239,7 @@ def call_openrouter_api(prompt, api_key):
         headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json",
                  "HTTP-Referer": "https://streamlit.io", "X-Title": "Myanmar Auto Video Dubbing"},
         json={"model": OPENROUTER_MODEL, "messages": [{"role": "user", "content": prompt}],
-              "temperature": 0.2}, timeout=240)
+              "temperature": 0.2}, timeout=TRANSLATION_TIMEOUT_SECONDS)
     if response.status_code >= 400:
         raise RuntimeError(f"OpenRouter error {response.status_code}: {response.text[:700]}")
     return response.json()["choices"][0]["message"]["content"]
@@ -249,7 +250,7 @@ def call_grok_api(prompt, api_key, model=GROK_MODEL):
         "https://api.x.ai/v1/chat/completions",
         headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
         json={"model": model, "messages": [{"role": "user", "content": prompt}],
-              "temperature": 0.2}, timeout=240)
+              "temperature": 0.2}, timeout=TRANSLATION_TIMEOUT_SECONDS)
     if response.status_code >= 400:
         raise RuntimeError(f"Grok error {response.status_code}: {response.text[:700]}")
     return response.json()["choices"][0]["message"]["content"]
