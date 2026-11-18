@@ -12,6 +12,7 @@ MAX_DURATION_SECONDS = 15 * 60
 GROQ_STT_MODEL = "whisper-large-v3-turbo"
 GEMINI_MODEL = "gemini-3.8-flash"
 OPENROUTER_MODEL = "openrouter/free"
+GROK_MODEL = "grok-4.7"
 LOCAL_WHISPER_MODEL = "tiny"
 CHUNK_SECONDS = 480
 
@@ -228,6 +229,17 @@ def call_openrouter_api(prompt, api_key):
     return response.json()["choices"][0]["message"]["content"]
 
 
+def call_grok_api(prompt, api_key, model=GROK_MODEL):
+    response = requests.post(
+        "https://api.x.ai/v1/chat/completions",
+        headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+        json={"model": model, "messages": [{"role": "user", "content": prompt}],
+              "temperature": 0.2}, timeout=240)
+    if response.status_code >= 400:
+        raise RuntimeError(f"Grok error {response.status_code}: {response.text[:700]}")
+    return response.json()["choices"][0]["message"]["content"]
+
+
 @lru_cache(maxsize=256)
 def free_translate_text(text, mymemory_email=""):
     """Translate to Burmese through MyMemory autodetect without Google rate limits."""
@@ -278,8 +290,8 @@ def free_translate_segments(segments, mymemory_email="", progress_callback=None)
     return translated, "Free MyMemory autodetect"
 
 
-def translate_segments(segments, gemini_key="", openrouter_key="", mymemory_email="",
-                       gemini_model=GEMINI_MODEL, progress_callback=None):
+def translate_segments(segments, gemini_key="", openrouter_key="", grok_key="", mymemory_email="",
+                       gemini_model=GEMINI_MODEL, grok_model=GROK_MODEL, progress_callback=None):
     translated = []
     batch_size = 18
     provider_order = []
@@ -306,6 +318,12 @@ def translate_segments(segments, gemini_key="", openrouter_key="", mymemory_emai
                 provider_order.append("OpenRouter")
             except Exception as exc:
                 errors.append(f"OpenRouter: {str(exc)[:160]}")
+        if raw is None and grok_key:
+            try:
+                raw = call_grok_api(prompt, grok_key, grok_model)
+                provider_order.append("Grok")
+            except Exception as exc:
+                errors.append(f"Grok: {str(exc)[:160]}")
         if raw is None:
             if not gemini_key and not openrouter_key:
                 return free_translate_segments(segments, mymemory_email, progress_callback)
@@ -468,6 +486,8 @@ def main():
     saved_gemini_key = secret("GEMINI_API_KEY")
     gemini_model = secret("GEMINI_MODEL", GEMINI_MODEL)
     openrouter_key = secret("OPENROUTER_API_KEY")
+    saved_grok_key = secret("GROK_API_KEY")
+    grok_model = secret("GROK_MODEL", GROK_MODEL)
     password = secret("APP_PASSWORD")
     if password:
         entered = st.text_input("ဝင်ရောက်ရန် Password", type="password")
@@ -484,6 +504,12 @@ def main():
         help="Gemini ကို video စာသားကို မြန်မာလို သဘာဝကျကျ ဘာသာပြန်ရန်သာ အသုံးပြုပါမယ်။ STT၊ TTS နှင့် video rendering အတွက် မသုံးပါ။ ဒီနေရာမှာထည့်သော key ကို ဒီ session အတွင်းသာ အသုံးပြုပါမယ်။",
     ).strip()
     gemini_key = gemini_input_key or saved_gemini_key
+    grok_input_key = st.text_input(
+        "Grok API Key — Translation fallback (Optional)", value="", type="password",
+        placeholder="xai-...",
+        help="Gemini နှင့် OpenRouter မရမှသာ Burmese translation အတွက် အသုံးပြုပါမယ်။",
+    ).strip()
+    grok_key = grok_input_key or saved_grok_key
     mymemory_email = st.text_input(
         "MYMEMORY_EMAIL (Optional)",
         value=secret("MYMEMORY_EMAIL"),
@@ -497,6 +523,8 @@ def main():
         active_providers.append(f"Gemini ({gemini_model})")
     if openrouter_key:
         active_providers.append("OpenRouter fallback")
+    if grok_key:
+        active_providers.append(f"Grok ({grok_model}) fallback")
     active_providers.append("Free MyMemory fallback")
     if not active_providers:
         active_providers.append("Free local Whisper → Free translation → Edge TTS")
@@ -556,7 +584,8 @@ def main():
 
                 status.info("စာသားအပိုင်းတိုင်းကို မြန်မာလို ဘာသာပြန်နေသည်...")
                 segments, translation_provider = translate_segments(
-                    segments, gemini_key, openrouter_key, mymemory_email, gemini_model,
+                    segments, gemini_key, openrouter_key, grok_key, mymemory_email,
+                    gemini_model, grok_model,
                     lambda fraction: set_progress(35 + fraction * 25, "မြန်မာဘာသာပြန်နေသည်"))
                 set_progress(62, f"မြန်မာဘာသာပြန်ပြီးပါပြီ ({translation_provider})")
 
