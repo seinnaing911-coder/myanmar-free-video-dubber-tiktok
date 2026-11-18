@@ -299,11 +299,9 @@ def translate_segments(segments, gemini_key="", openrouter_key="", grok_key="", 
         batch = segments[start:start + batch_size]
         source_lines = [{"id": i, "text": seg["text"]} for i, seg in enumerate(batch)]
         prompt = (
-            "Translate each line into natural, concise spoken Burmese in a fast-paced video recap narration style. "
-            "Make it sound like a clear storyteller explaining what happens in the video, not a literal word-for-word translation. "
-            "Preserve the main events, names, emotion and order. Do not add explanations, opinions, or events that are not in the source. "
-            "Keep each translation short enough to speak naturally within its original time slot; prefer compact wording over long sentences. "
-            "Do not merge, split, reorder, or omit the numbered lines. "
+            "Translate each line into natural, concise spoken Burmese for video dubbing. "
+            "Preserve meaning, names, emotion and order. Do not add explanations or events. "
+            "Keep each translation short enough to speak within its original time slot. "
             "Return ONLY a JSON array with objects containing id and myanmar. Keep every id.\n" +
             json.dumps(source_lines, ensure_ascii=False))
         raw = None
