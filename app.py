@@ -514,7 +514,7 @@ def main():
 
     if st.button("🎙️ မြန်မာအသံနဲ့ Dubbing လုပ်မယ်", type="primary", disabled=uploaded is None):
         if not groq_key:
-            st.info("API key မတွေ့ပါ။ Free local Whisper mode ကို အသုံးပြုနေပါတယ်။ ပထမဆုံး run မှာ Whisper model download လုပ်ရနိုင်ပါတယ်။")
+            st.info("GROQ_API_KEY မတွေ့ပါ။ အသံမှ စာသားဖော်ထုတ်ရန် Free local Whisper mode ကို အသုံးပြုနေပါတယ်။ Gemini API key သည် စာသားဖော်ထုတ်ခြင်းမဟုတ်ဘဲ နောက်အဆင့် မြန်မာဘာသာပြန်ခြင်းအတွက်သာ အသုံးပြုပါမယ်။ ပထမဆုံး run မှာ Whisper model download လုပ်ရနိုင်ပါတယ်။")
 
         with tempfile.TemporaryDirectory() as temp_dir:
             work = Path(temp_dir)
