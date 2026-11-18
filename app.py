@@ -477,11 +477,11 @@ def main():
 
     uploaded = st.file_uploader("Video တင်ပါ (MP4 / MOV / MKV / WEBM)", type=["mp4", "mov", "mkv", "webm"])
     gemini_input_key = st.text_input(
-        "Gemini API Key (Optional)",
+        "Gemini API Key — Translation only (Optional)",
         value="",
         type="password",
         placeholder="AIza...",
-        help="ဒီနေရာမှာထည့်သော key ကို ဒီ session အတွင်းသာ အသုံးပြုပါမယ်။ မထည့်ထားရင် app secret ထဲက key ကို အသုံးပြုပါမယ်။",
+        help="Gemini ကို video စာသားကို မြန်မာလို သဘာဝကျကျ ဘာသာပြန်ရန်သာ အသုံးပြုပါမယ်။ STT၊ TTS နှင့် video rendering အတွက် မသုံးပါ။ ဒီနေရာမှာထည့်သော key ကို ဒီ session အတွင်းသာ အသုံးပြုပါမယ်။",
     ).strip()
     gemini_key = gemini_input_key or saved_gemini_key
     mymemory_email = st.text_input(
