@@ -40,7 +40,7 @@ Keep API keys private. Do not commit real keys to GitHub.
 
 ## Provider order
 
-The app uses Groq Whisper when `GROQ_API_KEY` is configured, otherwise it uses local faster-whisper. For Burmese translation, Gemini is tried first when `GEMINI_API_KEY` is available, followed by OpenRouter, then Grok via the official xAI API, and finally MyMemory autodetect-to-Burmese translation. If a configured API fails, the next fallback is attempted automatically. Burmese Edge TTS generates the replacement voice in both API and no-key Free modes. The final MP4 never maps the original audio track; only the generated Burmese voice is included.
+The app uses Groq Whisper when `GROQ_API_KEY` is configured, otherwise it uses local faster-whisper. For Burmese translation, Gemini is tried first when `GEMINI_API_KEY` is available, followed by OpenRouter, then Grok via the official xAI API, and finally MyMemory autodetect-to-Burmese translation. The AI prompt produces compact, fast-paced recap narration rather than literal word-for-word translation, while preserving line order and fitting each original time slot. If a configured API fails, the next fallback is attempted automatically. Burmese Edge TTS generates the replacement voice in both API and no-key Free modes. The final MP4 never maps the original audio track; only the generated Burmese voice is included.
 
 Free mode has no AI API bill, but the first local Whisper run downloads a model and CPU processing is slower. Public free translation endpoints can also rate-limit heavy use. For the fastest mode, configure `GROQ_API_KEY` and optionally `OPENROUTER_API_KEY`.
 
