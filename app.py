@@ -9,7 +9,6 @@ import edge_tts
 APP_TITLE = "🎬 Myanmar Free Video Dubber"
 MAX_MB = 200
 MAX_DURATION_SECONDS = 15 * 60
-LOCAL_WHISPER_MAX_DURATION_SECONDS = 3 * 60
 GROQ_STT_MODEL = "whisper-large-v3-turbo"
 GEMINI_MODEL = "gemini-3.8-flash"
 OPENROUTER_MODEL = "openrouter/free"
@@ -147,15 +146,10 @@ def approximate_segments(text, offset, duration):
     return result
 
 
-@st.cache_resource(show_spinner=False)
-def get_local_whisper_model(model_name):
-    from faster_whisper import WhisperModel
-    return WhisperModel(model_name, device="cpu", compute_type="int8",
-                        cpu_threads=1, num_workers=1)
-
-
 def local_whisper_transcribe(audio_path):
-    model = get_local_whisper_model(secret("LOCAL_WHISPER_MODEL", LOCAL_WHISPER_MODEL))
+    from faster_whisper import WhisperModel
+    model = WhisperModel(secret("LOCAL_WHISPER_MODEL", LOCAL_WHISPER_MODEL),
+                         device="cpu", compute_type="int8")
     segments, _ = model.transcribe(str(audio_path), beam_size=1, vad_filter=True)
     return normalize_segments([{"start": s.start, "end": s.end, "text": s.text.strip()}
                                for s in segments if s.text.strip()], probe_duration(audio_path))
@@ -565,12 +559,6 @@ def main():
                     f"Video ကြာချိန်သည် {MAX_DURATION_SECONDS // 60} မိနစ်ထက် မကျော်ရပါ။ "
                     "Streamlit Cloud resource ကန့်သတ်ချက်ကြောင့် video ကို အပိုင်းတိုများခွဲပြီး ပြန်တင်ပါ။"
                 )
-            if not groq_key and duration > LOCAL_WHISPER_MAX_DURATION_SECONDS:
-                raise RuntimeError(
-                    "GROQ_API_KEY မရှိသော Local Whisper mode တွင် video သည် ၃ မိနစ်အောက် ဖြစ်ရပါမယ်။ "
-                    "ပိုရှည်သော video အတွက် Streamlit Secrets ထဲတွင် GROQ_API_KEY ထည့်ပါ။ "
-                    "Gemini/Grok/OpenRouter API များသည် ဘာသာပြန်ရန်သာ အသုံးပြုပါမယ်။"
-                )
             progress = st.progress(0, text="Video ပြင်ဆင်နေသည်... (0%)")
             status = st.empty()
 
@@ -591,7 +579,6 @@ def main():
                         status.warning(f"Groq မအောင်မြင်ပါ။ Local Whisper ကို စမ်းသုံးနေသည်။ {str(groq_error)[:180]}")
                         segments = local_whisper_transcribe(original_audio)
                 else:
-                    status.info("GROQ_API_KEY မရှိသဖြင့် Local Whisper (tiny, CPU mode) ဖြင့် အသံမှ စာသားဖော်ထုတ်နေသည်...")
                     segments = local_whisper_transcribe(original_audio)
                 if not segments:
                     raise RuntimeError("မူရင်းစကားပြောသံမှ စာသားမရရှိပါ။ Video ထဲတွင် အသံရှိ/မရှိ စစ်ဆေးပါ။")
