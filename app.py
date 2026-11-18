@@ -314,18 +314,18 @@ def translate_segments(segments, gemini_key="", openrouter_key="", grok_key="", 
                 provider_order.append("Gemini")
             except Exception as exc:
                 errors.append(f"Gemini: {str(exc)[:160]}")
-        if raw is None and grok_key:
-            try:
-                raw = call_grok_api(prompt, grok_key, grok_model)
-                provider_order.append("Grok")
-            except Exception as exc:
-                errors.append(f"Grok: {str(exc)[:160]}")
         if raw is None and openrouter_key:
             try:
                 raw = call_openrouter_api(prompt, openrouter_key)
                 provider_order.append("OpenRouter")
             except Exception as exc:
                 errors.append(f"OpenRouter: {str(exc)[:160]}")
+        if raw is None and grok_key:
+            try:
+                raw = call_grok_api(prompt, grok_key, grok_model)
+                provider_order.append("Grok")
+            except Exception as exc:
+                errors.append(f"Grok: {str(exc)[:160]}")
         if raw is None:
             if not gemini_key and not openrouter_key:
                 return free_translate_segments(segments, mymemory_email, progress_callback)
